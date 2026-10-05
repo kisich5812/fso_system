@@ -1,3 +1,6 @@
-idf_component_register(SRCS "hello_world_main.c"
-                       PRIV_REQUIRES spi_flash
-                       INCLUDE_DIRS "~/.espressif/v6.1/esp-idf/components/esp_driver_ledc/include")
+idf_component_register(
+  SRCS "hello_world_main.c"
+  INCLUDE_DIRS "."
+  PRIV_REQUIRES spi_flash
+                esp_driver_i2c
+                esp_driver_gpio)
