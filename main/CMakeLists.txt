@@ -1,6 +1,7 @@
 idf_component_register(
-  SRCS "hello_world_main.c"
+  SRCS "main.c"
   INCLUDE_DIRS "."
   PRIV_REQUIRES spi_flash
                 esp_driver_i2c
-                esp_driver_gpio)
+                esp_driver_gpio
+                mcp4725)
