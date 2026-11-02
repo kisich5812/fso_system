@@ -31,6 +31,21 @@ static rmt_symbol_word_t make_cycle(uint32_t high_ticks, uint32_t low_ticks) {
     return s;
 }
 
+static constexpr uint32_t TICK_DURATION = 10000; 
+
+static void char_to_rmt_words(char c, std::vector<rmt_symbol_word_t>& vec) {
+    for (uint8_t i = 0, mask = 0b1; i < 4; i++) {
+        rmt_symbol_word_t s = {};
+        s.level0    = (c & mask) ? 1 : 0;
+        mask <<= 1;
+        s.duration0 = TICK_DURATION;   // max 32767 ticks per segment
+        s.level0    = (c & mask) ? 1 : 0;
+        mask <<= 1;
+        s.duration1 = TICK_DURATION;
+        vec.push_back(s);
+    }
+}
+
 extern "C" 
 void app_main(void) { 
     // 1. TX channel
@@ -50,7 +65,11 @@ void app_main(void) {
     ESP_ERROR_CHECK(rmt_new_copy_encoder(&enc_cfg, &encoder));
 
     // 3. Generate the wave
-    std::array<rmt_symbol_word_t, 1> wave = { make_cycle(5000, 95000) };
+    //std::array<rmt_symbol_word_t, 1> wave = { make_cycle(5000, 5000) };
+    std::vector<rmt_symbol_word_t> wave{};
+    for (char c : "hello") {
+        char_to_rmt_words(c, wave);
+    }
 
     // 4. Send, looping forever
     rmt_transmit_config_t tx = {};
