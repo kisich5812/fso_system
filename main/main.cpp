@@ -1,86 +1,108 @@
-// REVIEW AND REFACTORING REQUIRED! This is mostly slop!
-
-#include <stdio.h>
+#include <vector>
+#include <string_view>
+#include <cstdint>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/i2c_master.h"
-#include "esp_log.h"
-#include "mcp4725.h"
-#include <array>
-#include <cstdint>
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
-#include "esp_check.h"
+#include "esp_log.h"
 
-#define I2C_SDA_GPIO GPIO_NUM_2
-#define I2C_SCL_GPIO GPIO_NUM_1
-#define MCP4725_ADDR 0x60
+static const char *TAG = "rmt_text";
 
-static const char *TAG = "rmt_wave";
+static constexpr gpio_num_t RMT_GPIO      = GPIO_NUM_8;
+static constexpr uint32_t   RES_HZ        = 1'000'000;  // 1 tick = 1 us
+static constexpr uint32_t   BIT_TICKS     = 10'000;     // 10 ms per bit (max 32767)
 
-static constexpr gpio_num_t RMT_GPIO = GPIO_NUM_8;   // avoid your I2C pins
-static constexpr uint32_t   RES_HZ   = 1'000'000;    // 1 tick = 1 us
+#include <string>
 
-// One RMT symbol = two (level, duration) segments, so one symbol = one full cycle
-static rmt_symbol_word_t make_cycle(uint32_t high_ticks, uint32_t low_ticks) {
-    rmt_symbol_word_t s = {};
-    s.level0    = 1;
-    s.duration0 = high_ticks;   // max 32767 ticks per segment
-    s.level1    = 0;
-    s.duration1 = low_ticks;
+static std::string bits_of(const std::vector<rmt_symbol_word_t> &v, size_t from)
+{
+    std::string s;
+    for (size_t i = from; i < v.size(); i++) {
+        s += v[i].level0 ? '1' : '0';
+        s += v[i].level1 ? '1' : '0';
+    }
     return s;
 }
 
-static constexpr uint32_t TICK_DURATION = 10000; 
+static void log_runs(const std::vector<rmt_symbol_word_t> &w)
+{
+    int cur = -1;
+    uint32_t ticks = 0;
+    auto flush = [&]() {
+        if (cur >= 0)
+            ESP_LOGI(TAG, "  %s for %u ms", cur ? "HIGH" : "LOW ",
+                     (unsigned)(ticks * 1000ULL / RES_HZ));
+    };
+    auto seg = [&](int level, uint32_t d) {
+        if (level == cur) { ticks += d; }
+        else { flush(); cur = level; ticks = d; }
+    };
+    for (const auto &s : w) {
+        seg(s.level0, s.duration0);
+        seg(s.level1, s.duration1);
+    }
+    flush();
+}
 
-static void char_to_rmt_words(char c, std::vector<rmt_symbol_word_t>& vec) {
-    for (uint8_t i = 0, mask = 0b1; i < 4; i++) {
+static void char_to_rmt_words(uint8_t c, std::vector<rmt_symbol_word_t> &out)
+{
+    for (int i = 0; i < 4; i++) {
         rmt_symbol_word_t s = {};
-        s.level0    = (c & mask) ? 1 : 0;
-        mask <<= 1;
-        s.duration0 = TICK_DURATION;   // max 32767 ticks per segment
-        s.level0    = (c & mask) ? 1 : 0;
-        mask <<= 1;
-        s.duration1 = TICK_DURATION;
-        vec.push_back(s);
+        s.level0    = (c >> (2 * i))     & 1;
+        s.duration0 = BIT_TICKS;
+        s.level1    = (c >> (2 * i + 1)) & 1;
+        s.duration1 = BIT_TICKS;
+        out.push_back(s);
     }
 }
 
-extern "C" 
-void app_main(void) { 
-    // 1. TX channel
+extern "C" void app_main(void)
+{
     rmt_tx_channel_config_t tx_cfg = {};
     tx_cfg.gpio_num          = RMT_GPIO;
     tx_cfg.clk_src           = RMT_CLK_SRC_DEFAULT;
     tx_cfg.resolution_hz     = RES_HZ;
-    tx_cfg.mem_block_symbols = 48;      // S3: 48 symbols per channel without DMA
+    tx_cfg.mem_block_symbols = 48;
     tx_cfg.trans_queue_depth = 4;
-
     rmt_channel_handle_t chan = nullptr;
     ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_cfg, &chan));
 
-    // 2. Encoder: "copy" just sends the symbols you give it as-is
     rmt_copy_encoder_config_t enc_cfg = {};
     rmt_encoder_handle_t encoder = nullptr;
     ESP_ERROR_CHECK(rmt_new_copy_encoder(&enc_cfg, &encoder));
 
-    // 3. Generate the wave
-    //std::array<rmt_symbol_word_t, 1> wave = { make_cycle(5000, 5000) };
-    std::vector<rmt_symbol_word_t> wave{};
-    for (char c : "hello") {
-        char_to_rmt_words(c, wave);
+    std::vector<rmt_symbol_word_t> wave;
+    for (char ch : std::string_view("hello")) {
+        size_t start = wave.size();
+        char_to_rmt_words((uint8_t)ch, wave);
+        ESP_LOGI(TAG, "'%c' 0x%02X -> bits (sent order) %s",
+                ch >= 32 ? ch : '.', (unsigned)(uint8_t)ch,
+                bits_of(wave, start).c_str());
     }
 
-    // 4. Send, looping forever
+    // Idle gap so a receiver can see where the message restarts
+    rmt_symbol_word_t gap = {};
+    gap.level0 = 0; gap.duration0 = 30'000;
+    gap.level1 = 0; gap.duration1 = 30'000;
+    wave.push_back(gap);
+
+    ESP_LOGI(TAG, "Waveform runs:");
+    log_runs(wave);
+
+    ESP_LOGI(TAG, "%u symbols", (unsigned)wave.size());   // must be <= 48 for looping
+
     rmt_transmit_config_t tx = {};
-    tx.loop_count = -1; // -1 = infinite; 0 = once
+    tx.loop_count = -1;
 
     ESP_ERROR_CHECK(rmt_enable(chan));
     ESP_ERROR_CHECK(rmt_transmit(chan, encoder, wave.data(),
                                  wave.size() * sizeof(rmt_symbol_word_t), &tx));
-    ESP_LOGI(TAG, "Transmitting on GPIO %d", RMT_GPIO);
+    ESP_LOGI(TAG, "Transmitting on GPIO %d", (int)RMT_GPIO);
 
     vTaskDelay(portMAX_DELAY);
+}
+
 
 // DAC stuff
 #if 0
@@ -115,6 +137,3 @@ void app_main(void) {
         vTaskDelay(300);
     }
 #endif
-
-
-}
