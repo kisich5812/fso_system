@@ -18,7 +18,7 @@
 
 static const char *TAG = "rmt_wave";
 
-static constexpr gpio_num_t RMT_GPIO = GPIO_NUM_40;   // avoid your I2C pins
+static constexpr gpio_num_t RMT_GPIO = GPIO_NUM_8;   // avoid your I2C pins
 static constexpr uint32_t   RES_HZ   = 1'000'000;    // 1 tick = 1 us
 
 // One RMT symbol = two (level, duration) segments, so one symbol = one full cycle
@@ -50,11 +50,11 @@ void app_main(void) {
     ESP_ERROR_CHECK(rmt_new_copy_encoder(&enc_cfg, &encoder));
 
     // 3. Generate the wave
-    std::array<rmt_symbol_word_t, 1> wave = { make_cycle(50000, 50000) };
+    std::array<rmt_symbol_word_t, 1> wave = { make_cycle(5000, 95000) };
 
     // 4. Send, looping forever
     rmt_transmit_config_t tx = {};
-    tx.loop_count = -1;                 // -1 = infinite; 0 = once
+    tx.loop_count = -1; // -1 = infinite; 0 = once
 
     ESP_ERROR_CHECK(rmt_enable(chan));
     ESP_ERROR_CHECK(rmt_transmit(chan, encoder, wave.data(),
