@@ -1,5 +1,24 @@
 #include "mcp4725.h"
 
+#include <cmath>
+
+esp_err_t mcp4725_set_fraction(i2c_master_dev_handle_t dac, float fraction) {
+    if (!std::isfinite(fraction) || fraction < 0.0f || fraction > 1.0f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const uint16_t value = static_cast<uint16_t>(fraction * 4095.0f + 0.5f);
+    return mcp4725_write(dac, value);
+}
+
+esp_err_t mcp4725_set_voltage(i2c_master_dev_handle_t dac, float voltage,
+                              float reference_voltage) {
+    if (!std::isfinite(voltage) || !std::isfinite(reference_voltage) ||
+        reference_voltage <= 0.0f || voltage < 0.0f || voltage > reference_voltage) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return mcp4725_set_fraction(dac, voltage / reference_voltage);
+}
+
 // Fast write: updates DAC register only (not EEPROM) 
 esp_err_t mcp4725_write(i2c_master_dev_handle_t dac, uint16_t value) { // 0..4095
     uint8_t buf[2] = { 

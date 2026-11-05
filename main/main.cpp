@@ -8,14 +8,23 @@
 #include "driver/rmt_tx.h"
 #include "driver/rmt_rx.h"
 #include "driver/rmt_encoder.h"
+#include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "mcp4725.h"
 
 static const char *TAG = "rmt_loopback";
 
 // GPIO8 transmits; connect it to GPIO3 for the first loopback test.
 static constexpr gpio_num_t TX_GPIO = GPIO_NUM_8;
 static constexpr gpio_num_t RX_GPIO = GPIO_NUM_3;
+
+// Change these to match the board wiring. GPIO8 and GPIO3 remain dedicated to RMT.
+static constexpr gpio_num_t DAC_SDA_GPIO = GPIO_NUM_6;
+static constexpr gpio_num_t DAC_SCL_GPIO = GPIO_NUM_7;
+static constexpr uint8_t DAC_I2C_ADDRESS = 0x60; // A0 low; common MCP4725 address
+static constexpr float DAC_REFERENCE_VOLTAGE = 3.3f; // Set to the DAC module's VDD
+static constexpr float FRAC = 0.1f; // Fraction og DAC_REF_VOLTAGE that will be DAC's output
 
 // Both RMT channels use the same resolution and clock source.
 static constexpr uint32_t RMT_RESOLUTION_HZ = 1'000'000; // 1 tick = 1 us
@@ -227,6 +236,60 @@ static void receiver_task(void *arg)
 
 extern "C" void app_main(void)
 {
+    // ---------- MCP4725 DAC ----------
+    i2c_master_bus_config_t i2c_bus_config = {};
+    i2c_bus_config.i2c_port = I2C_NUM_0;
+    i2c_bus_config.sda_io_num = DAC_SDA_GPIO;
+    i2c_bus_config.scl_io_num = DAC_SCL_GPIO;
+    i2c_bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    i2c_bus_config.glitch_ignore_cnt = 7;
+    i2c_bus_config.flags.enable_internal_pullup = true;
+
+    i2c_master_bus_handle_t i2c_bus = nullptr;
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_config, &i2c_bus));
+
+    // Check the configured address first, then the MCP4725's usual address
+    // range (0x60..0x67). The address pins/module variant determine the address.
+    uint8_t detected_dac_address = 0;
+    esp_err_t probe_err = i2c_master_probe(i2c_bus, DAC_I2C_ADDRESS, 100);
+    if (probe_err == ESP_OK) {
+        detected_dac_address = DAC_I2C_ADDRESS;
+    } else {
+        for (uint8_t address = 0x60; address <= 0x67; ++address) {
+            if (address == DAC_I2C_ADDRESS) {
+                continue;
+            }
+            if (i2c_master_probe(i2c_bus, address, 100) == ESP_OK) {
+                detected_dac_address = address;
+                break;
+            }
+        }
+    }
+
+    ESP_LOGI(TAG, "Detected DAC at 0x%02X", detected_dac_address);
+
+    if (detected_dac_address == 0) {
+        ESP_LOGE(TAG, "No DAC ACK at 0x%02X or 0x60..0x67; check SDA/SCL, power, ground, pull-ups and address pins",
+                 DAC_I2C_ADDRESS);
+    } else {
+        i2c_device_config_t dac_config = {};
+        dac_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        dac_config.device_address = detected_dac_address;
+        dac_config.scl_speed_hz = 100'000;
+
+        i2c_master_dev_handle_t dac = nullptr;
+        esp_err_t err = i2c_master_bus_add_device(i2c_bus, &dac_config, &dac);
+        if (err == ESP_OK) {
+            // Example output: half of Vref (1.65 V for a 3.3 V module).
+            err = mcp4725_set_fraction(dac, FRAC);
+        }
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "MCP4725 at 0x%02X set to %f of Vref (about %.2f V)",
+                     detected_dac_address, FRAC, DAC_REFERENCE_VOLTAGE * FRAC);
+        } else {
+            ESP_LOGE(TAG, "MCP4725 write failed: %s", esp_err_to_name(err));
+        }
+    }
     // ---------- RX channel on GPIO3 ----------
     rmt_rx_channel_config_t rx_config = {};
     rx_config.gpio_num = RX_GPIO;
