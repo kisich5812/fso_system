@@ -15,15 +15,13 @@
 
 static const char *TAG = "rmt_loopback";
 
-// GPIO8 transmits; connect it to GPIO3 for the first loopback test.
 static constexpr gpio_num_t TX_GPIO = GPIO_NUM_4;
 static constexpr gpio_num_t RX_GPIO = GPIO_NUM_3;
 
-// Change these to match the board wiring. GPIO8 and GPIO3 remain dedicated to RMT.
 static constexpr gpio_num_t DAC_SDA_GPIO = GPIO_NUM_6;
 static constexpr gpio_num_t DAC_SCL_GPIO = GPIO_NUM_7;
 static constexpr uint8_t DAC_I2C_ADDRESS = 0x60; // A0 low; common MCP4725 address
-static constexpr float DAC_REFERENCE_VOLTAGE = 3.3f; // Set to the DAC module's VDD
+static constexpr float DAC_REFERENCE_VOLTAGE = 3.3f; 
 static constexpr float FRAC = 0.5f; // Fraction og DAC_REF_VOLTAGE that will be DAC's output
 
 // Both RMT channels use the same resolution and clock source.
