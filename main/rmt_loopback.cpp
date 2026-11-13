@@ -13,6 +13,10 @@
 #include "driver/rmt_encoder.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include <cstring>
+#include "driver/usb_serial_jtag.h"
+#include "esp_vfs_dev.h"
+#include "driver/usb_serial_jtag_vfs.h"
 
 namespace { //anonymous
 
@@ -20,17 +24,17 @@ const char *TAG = "rmt_loopback";
 constexpr gpio_num_t TX_GPIO = GPIO_NUM_4;
 constexpr gpio_num_t RX_GPIO = GPIO_NUM_3;
 constexpr uint32_t RMT_RESOLUTION_HZ = 1'000'000; // 1 tick = 1 us
-constexpr uint32_t DEFAULT_BIT_TICKS = 5'000;
+constexpr uint32_t DEFAULT_BIT_TICKS = 500; // 0.5 ms
 constexpr uint32_t GAP_TICKS = 10'000;
-constexpr uint32_t GAP_N     = 100;
+constexpr uint32_t GAP_N     = 50;
 constexpr uint32_t RX_STOP_NS = 25'000'000;
-constexpr char MESSAGE[] = "hello";
+constexpr char MESSAGE[] = "Hello!";
 constexpr size_t MESSAGE_LEN = sizeof(MESSAGE) - 1;
 constexpr size_t MESSAGE_BITS = MESSAGE_LEN * 8;
 constexpr uint8_t SYNC_BITS[] = {1, 0, 1, 0};
 constexpr size_t SYNC_LEN = sizeof(SYNC_BITS) / sizeof(SYNC_BITS[0]);
 constexpr size_t RMT_MEMORY_SYMBOLS = 48;
-constexpr size_t RX_BUFFER_SYMBOLS = 64;
+constexpr size_t RX_BUFFER_SYMBOLS = 512;
 QueueHandle_t s_rx_queue = nullptr;
 rmt_channel_handle_t s_rx_channel = nullptr;
 rmt_symbol_word_t s_rx_buffer[RX_BUFFER_SYMBOLS] = {};
@@ -161,9 +165,11 @@ bool decode_message(const rmt_symbol_word_t *symbols,
                     char *output,
                     size_t output_size)
 {
-    if (symbols == nullptr || output == nullptr || output_size < MESSAGE_LEN + 1) {
+    if (!symbols || 
+        !output || 
+        output_size < MESSAGE_LEN + 1)
         return false;
-    }
+
     std::vector<PulseRun> runs;
     runs.reserve(symbol_count * 2);
     for (size_t i = 0; i < symbol_count; ++i) {
@@ -172,9 +178,11 @@ bool decode_message(const rmt_symbol_word_t *symbols,
     }
     std::vector<uint8_t> bits;
     bits.reserve(MESSAGE_BITS + SYNC_LEN + 8);
+    //ESP_LOGI(TAG, "In total got %zu runs", runs.size());
     for (const PulseRun &run : runs) {
         const uint32_t bit_count = (run.duration + s_bit_ticks / 2) / s_bit_ticks;
         if (bit_count == 0 || bit_count > 16) {
+            //ESP_LOGW(TAG, "Bit count 0 or more than 16");
             continue;
         }
         const uint32_t expected_duration = bit_count * s_bit_ticks;
@@ -182,6 +190,7 @@ bool decode_message(const rmt_symbol_word_t *symbols,
                                    ? run.duration - expected_duration
                                    : expected_duration - run.duration;
         if (error > s_bit_ticks / 3) {
+            //ESP_LOGW(TAG, "Error too big");
             continue;
         }
         for (uint32_t n = 0; n < bit_count; ++n) {
@@ -197,6 +206,7 @@ bool decode_message(const rmt_symbol_word_t *symbols,
             }
         }
         if (!sync_found) {
+            //ESP_LOGW(TAG, "Couldn't find sync");
             continue;
         }
         const size_t data_start = start + SYNC_LEN;
@@ -206,6 +216,7 @@ bool decode_message(const rmt_symbol_word_t *symbols,
                 value |= static_cast<uint8_t>(bits[data_start + character * 8 + bit] << bit);
             }
             output[character] = static_cast<char>(value);
+            //ESP_LOGI(TAG, "Decoded %c", output[character]);
         }
         output[MESSAGE_LEN] = '\0';
         return true;
@@ -217,26 +228,29 @@ void receiver_task(void *arg)
 {
     (void)arg;
     rmt_rx_done_event_data_t event_data = {};
+
+    size_t n = 0;
     while (true) {
         if (xQueueReceive(s_rx_queue, &event_data, portMAX_DELAY) != pdTRUE) {
             continue;
         }
         char received[MESSAGE_LEN + 1] = {};
+        ESP_LOGI(TAG, "Попытка #%zu: Отправлено: %s", n, MESSAGE);
         const bool decoded = decode_message(event_data.received_symbols,
                                             event_data.num_symbols,
                                             received,
                                             sizeof(received));
-        ESP_LOGI(TAG, "Отправлено: %s", MESSAGE);
         if (decoded) {
-            ESP_LOGI(TAG, "Принято:   %s", received);
+            ESP_LOGI(TAG, "Попытка #%zu: Принято:   %s", n, received);
         } else {
-            ESP_LOGW(TAG, "Не удалось декодировать кадр (получено RMT-символов: %u)",
-                     static_cast<unsigned>(event_data.num_symbols));
+            ESP_LOGW(TAG, "Попытка #%zu: Не удалось декодировать кадр (получено RMT-символов: %u)",
+                          n, static_cast<unsigned>(event_data.num_symbols));
         }
         ESP_ERROR_CHECK(rmt_receive(s_rx_channel,
                                     s_rx_buffer,
                                     sizeof(s_rx_buffer),
                                     &s_rx_receive_config));
+        n++;
     }
 }
 
@@ -272,14 +286,42 @@ rmt_channel_handle_t initialize_transmitter()
 
 uint32_t read_transmit_frequency()
 {
+#if 0
     constexpr uint32_t minimum_frequency =
         (RMT_RESOLUTION_HZ + 32'766) / 32'767;
     constexpr uint32_t maximum_frequency = RMT_RESOLUTION_HZ;
     char input[16] = {};
     size_t length = 0;
 
-    std::printf("Enter transmit frequency in Hz (31-1000000, default 200): ");
-    std::fflush(stdout);
+
+    usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    usb_serial_jtag_driver_install(&cfg);
+
+    // Make stdin/stdout use the driver (blocking, interrupt-driven)
+    usb_serial_jtag_vfs_use_driver();
+    // Treat CR (what the monitor sends on Enter) as newline
+    usb_serial_jtag_vfs_set_rx_line_endings(ESP_LINE_ENDINGS_CR);
+    usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+
+    // Optional: unbuffered so prompts show immediately
+    setvbuf(stdin, nullptr, _IONBF, 0);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+#if 0
+    while (true) {
+        if (fgets(line, sizeof(line), stdin) == nullptr) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        int value = 0;
+        if (sscanf(line, "%d", &value) == 1) {
+            printf("You entered: %d\n", value);
+        } else {
+            printf("Invalid input: %s\n", line);
+        }
+    }
+#endif
+        std::printf("Enter transmit frequency in Hz (31-1000000, default 200): ");
+        std::fflush(stdout);
 
     while (length + 1 < sizeof(input)) {
         fd_set read_fds;
@@ -287,10 +329,10 @@ uint32_t read_transmit_frequency()
         FD_SET(STDIN_FILENO, &read_fds);
         timeval timeout = {};
         timeout.tv_sec = 5;
-        const int ready = select(STDIN_FILENO + 1, &read_fds, nullptr, nullptr, &timeout);
-        if (ready <= 0) {
-            break;
-        }
+        //const int ready = select(STDIN_FILENO + 1, &read_fds, nullptr, nullptr, &timeout);
+        //if (ready <= 0) {
+        //    break;
+        //}
 
         char character = 0;
         if (read(STDIN_FILENO, &character, 1) != 1) {
@@ -326,6 +368,8 @@ uint32_t read_transmit_frequency()
     std::printf("Transmitting at %lu Hz (%lu ticks per bit)\n",
                 RMT_RESOLUTION_HZ / bit_ticks, bit_ticks);
     return bit_ticks;
+#endif
+    return DEFAULT_BIT_TICKS;
 }
 
 }

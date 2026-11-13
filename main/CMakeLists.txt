@@ -7,4 +7,5 @@ idf_component_register(
                 esp_driver_gpio
                 vfs
                 lwip
-                mcp4725)
+                mcp4725
+                esp_driver_usb_serial_jtag)
