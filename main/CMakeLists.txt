@@ -5,4 +5,6 @@ idf_component_register(
                 esp_driver_rmt
                 esp_driver_i2c
                 esp_driver_gpio
+                vfs
+                lwip
                 mcp4725)

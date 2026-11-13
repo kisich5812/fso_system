@@ -14,35 +14,87 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
-namespace {
+namespace { //anonymous
 
-static const char *TAG = "rmt_loopback";
-static constexpr gpio_num_t TX_GPIO = GPIO_NUM_4;
-static constexpr gpio_num_t RX_GPIO = GPIO_NUM_3;
-static constexpr uint32_t RMT_RESOLUTION_HZ = 1'000'000; // 1 tick = 1 us
-static constexpr uint32_t DEFAULT_BIT_TICKS = 5'000;
-static constexpr uint32_t GAP_TICKS = 10'000;
-static constexpr uint32_t GAP_N     = 100;
-static constexpr uint32_t RX_STOP_NS = 25'000'000;
-static constexpr char MESSAGE[] = "hello";
-static constexpr size_t MESSAGE_LEN = sizeof(MESSAGE) - 1;
-static constexpr size_t MESSAGE_BITS = MESSAGE_LEN * 8;
-static constexpr uint8_t SYNC_BITS[] = {1, 0, 1, 0};
-static constexpr size_t SYNC_LEN = sizeof(SYNC_BITS) / sizeof(SYNC_BITS[0]);
-static constexpr size_t RMT_MEMORY_SYMBOLS = 48;
-static constexpr size_t RX_BUFFER_SYMBOLS = 64;
-static QueueHandle_t s_rx_queue = nullptr;
-static rmt_channel_handle_t s_rx_channel = nullptr;
-static rmt_symbol_word_t s_rx_buffer[RX_BUFFER_SYMBOLS] = {};
-static rmt_receive_config_t s_rx_receive_config = {};
-static uint32_t s_bit_ticks = DEFAULT_BIT_TICKS;
+const char *TAG = "rmt_loopback";
+constexpr gpio_num_t TX_GPIO = GPIO_NUM_4;
+constexpr gpio_num_t RX_GPIO = GPIO_NUM_3;
+constexpr uint32_t RMT_RESOLUTION_HZ = 1'000'000; // 1 tick = 1 us
+constexpr uint32_t DEFAULT_BIT_TICKS = 5'000;
+constexpr uint32_t GAP_TICKS = 10'000;
+constexpr uint32_t GAP_N     = 100;
+constexpr uint32_t RX_STOP_NS = 25'000'000;
+constexpr char MESSAGE[] = "hello";
+constexpr size_t MESSAGE_LEN = sizeof(MESSAGE) - 1;
+constexpr size_t MESSAGE_BITS = MESSAGE_LEN * 8;
+constexpr uint8_t SYNC_BITS[] = {1, 0, 1, 0};
+constexpr size_t SYNC_LEN = sizeof(SYNC_BITS) / sizeof(SYNC_BITS[0]);
+constexpr size_t RMT_MEMORY_SYMBOLS = 48;
+constexpr size_t RX_BUFFER_SYMBOLS = 64;
+QueueHandle_t s_rx_queue = nullptr;
+rmt_channel_handle_t s_rx_channel = nullptr;
+rmt_symbol_word_t s_rx_buffer[RX_BUFFER_SYMBOLS] = {};
+rmt_receive_config_t s_rx_receive_config = {};
+uint32_t s_bit_ticks = DEFAULT_BIT_TICKS;
 
 struct PulseRun {
     uint8_t level;
     uint32_t duration;
 };
 
-static void append_pair(std::vector<rmt_symbol_word_t> &wave, uint8_t bit0, uint8_t bit1)
+void append_pair(std::vector<rmt_symbol_word_t> &wave, uint8_t bit0, uint8_t bit1);
+void append_character(uint8_t c, std::vector<rmt_symbol_word_t> &wave);
+std::vector<rmt_symbol_word_t> make_waveform();
+bool rx_done_callback(rmt_channel_handle_t channel,
+                      const rmt_rx_done_event_data_t *event_data,
+                      void *user_data);
+void append_phase_to_runs(std::vector<PulseRun> &runs, uint8_t level, uint32_t duration);
+bool decode_message(const rmt_symbol_word_t *symbols,
+                    size_t symbol_count,
+                    char *output,
+                    size_t output_size);
+void receiver_task(void *arg);
+void initialize_receiver();
+rmt_channel_handle_t initialize_transmitter();
+uint32_t read_transmit_frequency();
+
+}
+
+void start_rmt_loopback()
+{
+    s_bit_ticks = read_transmit_frequency();
+    initialize_receiver();
+    rmt_channel_handle_t tx_channel = initialize_transmitter();
+    rmt_copy_encoder_config_t encoder_config = {};
+    rmt_encoder_handle_t encoder = nullptr;
+    ESP_ERROR_CHECK(rmt_new_copy_encoder(&encoder_config, &encoder));
+    std::vector<rmt_symbol_word_t> waveform = make_waveform();
+    ESP_LOGI(TAG, "TX GPIO=%d, RX GPIO=%d, symbols=%u",
+             static_cast<int>(TX_GPIO),
+             static_cast<int>(RX_GPIO),
+             static_cast<unsigned>(waveform.size()));
+    BaseType_t task_created = xTaskCreate(receiver_task, "rmt_rx_parser", 4096, nullptr, 10, nullptr);
+    ESP_ERROR_CHECK(task_created == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(rmt_enable(s_rx_channel));
+    ESP_ERROR_CHECK(rmt_enable(tx_channel));
+    ESP_ERROR_CHECK(rmt_receive(s_rx_channel,
+                                s_rx_buffer,
+                                sizeof(s_rx_buffer),
+                                &s_rx_receive_config));
+    rmt_transmit_config_t tx_transmit_config = {};
+    tx_transmit_config.loop_count = -1;
+    ESP_ERROR_CHECK(rmt_transmit(tx_channel,
+                                 encoder,
+                                 waveform.data(),
+                                 waveform.size() * sizeof(rmt_symbol_word_t),
+                                 &tx_transmit_config));
+    ESP_LOGI(TAG, "RMT transmitter is looping; connect GPIO8 to GPIO3 for loopback.");
+    vTaskDelay(portMAX_DELAY);
+}
+
+namespace { //anonymous
+
+void append_pair(std::vector<rmt_symbol_word_t> &wave, uint8_t bit0, uint8_t bit1)
 {
     rmt_symbol_word_t symbol = {};
     symbol.level0 = bit0;
@@ -52,14 +104,14 @@ static void append_pair(std::vector<rmt_symbol_word_t> &wave, uint8_t bit0, uint
     wave.push_back(symbol);
 }
 
-static void append_character(uint8_t c, std::vector<rmt_symbol_word_t> &wave)
+void append_character(uint8_t c, std::vector<rmt_symbol_word_t> &wave)
 {
     for (int bit = 0; bit < 8; bit += 2) {
         append_pair(wave, (c >> bit) & 1U, (c >> (bit + 1)) & 1U);
     }
 }
 
-static std::vector<rmt_symbol_word_t> make_waveform()
+std::vector<rmt_symbol_word_t> make_waveform()
 {
     std::vector<rmt_symbol_word_t> wave;
     wave.reserve(2 + MESSAGE_LEN * 4 + 2);
@@ -80,9 +132,9 @@ static std::vector<rmt_symbol_word_t> make_waveform()
     return wave;
 }
 
-static bool rx_done_callback(rmt_channel_handle_t channel,
-                             const rmt_rx_done_event_data_t *event_data,
-                             void *user_data)
+bool rx_done_callback(rmt_channel_handle_t channel,
+                      const rmt_rx_done_event_data_t *event_data,
+                      void *user_data)
 {
     (void)channel;
     QueueHandle_t queue = static_cast<QueueHandle_t>(user_data);
@@ -91,7 +143,8 @@ static bool rx_done_callback(rmt_channel_handle_t channel,
     return higher_priority_task_woken == pdTRUE;
 }
 
-static void append_phase_to_runs(std::vector<PulseRun> &runs, uint8_t level, uint32_t duration)
+
+void append_phase_to_runs(std::vector<PulseRun> &runs, uint8_t level, uint32_t duration)
 {
     if (duration == 0) {
         return;
@@ -103,10 +156,10 @@ static void append_phase_to_runs(std::vector<PulseRun> &runs, uint8_t level, uin
     }
 }
 
-static bool decode_message(const rmt_symbol_word_t *symbols,
-                           size_t symbol_count,
-                           char *output,
-                           size_t output_size)
+bool decode_message(const rmt_symbol_word_t *symbols,
+                    size_t symbol_count,
+                    char *output,
+                    size_t output_size)
 {
     if (symbols == nullptr || output == nullptr || output_size < MESSAGE_LEN + 1) {
         return false;
@@ -160,7 +213,7 @@ static bool decode_message(const rmt_symbol_word_t *symbols,
     return false;
 }
 
-static void receiver_task(void *arg)
+void receiver_task(void *arg)
 {
     (void)arg;
     rmt_rx_done_event_data_t event_data = {};
@@ -187,7 +240,7 @@ static void receiver_task(void *arg)
     }
 }
 
-static void initialize_receiver()
+void initialize_receiver()
 {
     rmt_rx_channel_config_t rx_config = {};
     rx_config.gpio_num = RX_GPIO;
@@ -204,7 +257,7 @@ static void initialize_receiver()
     ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(s_rx_channel, &rx_callbacks, s_rx_queue));
 }
 
-static rmt_channel_handle_t initialize_transmitter()
+rmt_channel_handle_t initialize_transmitter()
 {
     rmt_tx_channel_config_t tx_config = {};
     tx_config.gpio_num = TX_GPIO;
@@ -217,7 +270,7 @@ static rmt_channel_handle_t initialize_transmitter()
     return tx_channel;
 }
 
-static uint32_t read_transmit_frequency()
+uint32_t read_transmit_frequency()
 {
     constexpr uint32_t minimum_frequency =
         (RMT_RESOLUTION_HZ + 32'766) / 32'767;
@@ -255,7 +308,8 @@ static uint32_t read_transmit_frequency()
     }
 
     if (length == 0) {
-        std::printf("Using default frequency: %u Hz\n", RMT_RESOLUTION_HZ / DEFAULT_BIT_TICKS);
+        std::printf("Using default frequency: %lu Hz\n", 
+                    RMT_RESOLUTION_HZ / DEFAULT_BIT_TICKS);
         return DEFAULT_BIT_TICKS;
     }
 
@@ -263,47 +317,15 @@ static uint32_t read_transmit_frequency()
     char *end = nullptr;
     const unsigned long frequency = std::strtoul(input, &end, 10);
     if (*end != '\0' || frequency < minimum_frequency || frequency > maximum_frequency) {
-        std::printf("Frequency out of range; using default: %u Hz\n",
+        std::printf("Frequency out of range; using default: %lu Hz\n",
                     RMT_RESOLUTION_HZ / DEFAULT_BIT_TICKS);
         return DEFAULT_BIT_TICKS;
     }
 
     const uint32_t bit_ticks = RMT_RESOLUTION_HZ / static_cast<uint32_t>(frequency);
-    std::printf("Transmitting at %u Hz (%u ticks per bit)\n",
+    std::printf("Transmitting at %lu Hz (%lu ticks per bit)\n",
                 RMT_RESOLUTION_HZ / bit_ticks, bit_ticks);
     return bit_ticks;
 }
 
-}
-
-void start_rmt_loopback()
-{
-    s_bit_ticks = read_transmit_frequency();
-    initialize_receiver();
-    rmt_channel_handle_t tx_channel = initialize_transmitter();
-    rmt_copy_encoder_config_t encoder_config = {};
-    rmt_encoder_handle_t encoder = nullptr;
-    ESP_ERROR_CHECK(rmt_new_copy_encoder(&encoder_config, &encoder));
-    std::vector<rmt_symbol_word_t> waveform = make_waveform();
-    ESP_LOGI(TAG, "TX GPIO=%d, RX GPIO=%d, symbols=%u",
-             static_cast<int>(TX_GPIO),
-             static_cast<int>(RX_GPIO),
-             static_cast<unsigned>(waveform.size()));
-    BaseType_t task_created = xTaskCreate(receiver_task, "rmt_rx_parser", 4096, nullptr, 10, nullptr);
-    ESP_ERROR_CHECK(task_created == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(rmt_enable(s_rx_channel));
-    ESP_ERROR_CHECK(rmt_enable(tx_channel));
-    ESP_ERROR_CHECK(rmt_receive(s_rx_channel,
-                                s_rx_buffer,
-                                sizeof(s_rx_buffer),
-                                &s_rx_receive_config));
-    rmt_transmit_config_t tx_transmit_config = {};
-    tx_transmit_config.loop_count = -1;
-    ESP_ERROR_CHECK(rmt_transmit(tx_channel,
-                                 encoder,
-                                 waveform.data(),
-                                 waveform.size() * sizeof(rmt_symbol_word_t),
-                                 &tx_transmit_config));
-    ESP_LOGI(TAG, "RMT transmitter is looping; connect GPIO8 to GPIO3 for loopback.");
-    vTaskDelay(portMAX_DELAY);
 }
