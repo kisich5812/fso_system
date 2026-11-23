@@ -8,4 +8,5 @@ idf_component_register(
                 vfs
                 lwip
                 mcp4725
+                lsm6ds3
                 esp_driver_usb_serial_jtag)

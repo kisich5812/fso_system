@@ -39,18 +39,23 @@ void initialize_dac()
     esp_err_t probe_err = i2c_master_probe(i2c_bus, DAC_I2C_ADDRESS, 100);
     if (probe_err == ESP_OK) {
         detected_dac_address = DAC_I2C_ADDRESS;
-    } else {
-        for (uint8_t address = 0x60; address <= 0x67; ++address) {
-            if (address == DAC_I2C_ADDRESS) {
-                continue;
-            }
+    } 
+    #if 1
+    /*else*/ {
+        for (uint8_t address = 0x00; address <= 0xFE; ++address) {
+            //if (address == DAC_I2C_ADDRESS) {
+            //    continue;
+            //}
             if (i2c_master_probe(i2c_bus, address, 100) == ESP_OK) {
                 ESP_LOGI(TAG, "Found smth at 0x%02X", address);
-                detected_dac_address = address;
-                break;
+                //detected_dac_address = address;
+                //break;
+            } else {
+                //ESP_LOGI(TAG, "dogi dogi");
             }
         }
     }
+#endif
 
     ESP_LOGI(TAG, "Detected DAC at 0x%02X", detected_dac_address);
 
