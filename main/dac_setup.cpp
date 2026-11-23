@@ -1,16 +1,22 @@
+#include <cmath>
 #include <cstdint>
 
+#include "FreeRTOSConfig.h"
 #include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
+#include "freertos/projdefs.h"
 #include "mcp4725.h"
+#include "portmacro.h"
 
 namespace {
 
 static const char *TAG = "rmt_loopback";
-static constexpr gpio_num_t DAC_SDA_GPIO = GPIO_NUM_6;
-static constexpr gpio_num_t DAC_SCL_GPIO = GPIO_NUM_7;
-static constexpr uint8_t DAC_I2C_ADDRESS = 0x60;
+static constexpr gpio_num_t DAC_SDA_GPIO = GPIO_NUM_4;
+static constexpr gpio_num_t DAC_SCL_GPIO = GPIO_NUM_5;
+static constexpr uint8_t DAC_I2C_ADDRESS = 0x61; // first DAC is 0x60, 
+                                                 // second DAC is 0x61
 static constexpr float DAC_REFERENCE_VOLTAGE = 3.3f;
 static constexpr float FRAC = 0.5f;
 
@@ -18,7 +24,6 @@ static constexpr float FRAC = 0.5f;
 
 void initialize_dac()
 {
-#if 0 //disable dac for now
     i2c_master_bus_config_t i2c_bus_config = {};
     i2c_bus_config.i2c_port = I2C_NUM_0;
     i2c_bus_config.sda_io_num = DAC_SDA_GPIO;
@@ -40,6 +45,7 @@ void initialize_dac()
                 continue;
             }
             if (i2c_master_probe(i2c_bus, address, 100) == ESP_OK) {
+                ESP_LOGI(TAG, "Found smth at 0x%02X", address);
                 detected_dac_address = address;
                 break;
             }
@@ -61,6 +67,7 @@ void initialize_dac()
 
     i2c_master_dev_handle_t dac = nullptr;
     esp_err_t err = i2c_master_bus_add_device(i2c_bus, &dac_config, &dac);
+#if 0
     if (err == ESP_OK) {
         err = mcp4725_set_fraction(dac, FRAC);
     }
@@ -71,4 +78,10 @@ void initialize_dac()
         ESP_LOGE(TAG, "MCP4725 write failed: %s", esp_err_to_name(err));
     }
 #endif
+    for (;;) {
+    for (size_t i = 0; i < 20; i++) {
+        mcp4725_set_fraction(dac, std::abs(sin(2 * M_PI * i / 20)));
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    }
 }
