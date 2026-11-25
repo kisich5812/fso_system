@@ -1101,7 +1101,7 @@ CONFIG_ESP_ERR_TO_NAME_LOOKUP=y
 # GDMA Configurations
 #
 # default:
-# CONFIG_GDMA_CTRL_FUNC_IN_IRAM is not set
+CONFIG_GDMA_CTRL_FUNC_IN_IRAM=y
 # default:
 CONFIG_GDMA_ISR_HANDLER_IN_IRAM=y
 # default:
@@ -1150,6 +1150,17 @@ CONFIG_RMT_OBJ_CACHE_SAFE=y
 # default:
 # CONFIG_RMT_ISR_IRAM_SAFE is not set
 # end of ESP-Driver:RMT Configurations
+
+#
+# ESP-Driver:SPI Configurations
+#
+# default:
+CONFIG_SPI_MASTER_ISR_IN_IRAM=y
+# default:
+# CONFIG_SPI_SLAVE_IN_IRAM is not set
+# default:
+CONFIG_SPI_SLAVE_ISR_IN_IRAM=y
+# end of ESP-Driver:SPI Configurations
 
 #
 # ESP-Driver:UART Configurations
@@ -1328,6 +1339,8 @@ CONFIG_ESP_BROWNOUT_USE_INTR=y
 # end of Brownout Detector
 # end of Power Supplier
 
+# default:
+CONFIG_ESP_SPI_BUS_LOCK_ISR_FUNCS_IN_IRAM=y
 # default:
 CONFIG_ESP_INTR_IN_IRAM=y
 # end of Hardware Settings
@@ -2746,6 +2759,17 @@ CONFIG_VFS_SEMIHOSTFS_MAX_MOUNT_POINTS=1
 # default:
 CONFIG_VFS_INITIALIZE_DEV_NULL=y
 # end of Virtual file system
+
+#
+# ESPP Logger
+#
+# default:
+CONFIG_ESPP_LOGGER_LOG_LEVEL=4
+# default:
+CONFIG_ESPP_LOGGER_ENABLE_CURSOR_COMMANDS=y
+# default:
+# CONFIG_ESPP_LOGGER_MUTABLE_TAG is not set
+# end of ESPP Logger
 # end of Component config
 
 # default:

@@ -1,8 +1,9 @@
 idf_component_register(
-  SRCS "lsm_main.c" 
+  SRCS "lora_main.cpp" 
   INCLUDE_DIRS "."
   PRIV_REQUIRES spi_flash
                 esp_driver_rmt
+                esp_driver_spi
                 esp_driver_i2c
                 esp_driver_gpio
                 vfs

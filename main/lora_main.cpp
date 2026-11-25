@@ -20,12 +20,12 @@ static const char *TAG = "lora_ping_pong";
 // Adjust these GPIOs to match your ESP32 + SX1262 wiring
 constexpr spi_host_device_t SPI_HOST_ID = SPI2_HOST;
 constexpr gpio_num_t PIN_MOSI = GPIO_NUM_11;
-constexpr gpio_num_t PIN_MISO = GPIO_NUM_13;
-constexpr gpio_num_t PIN_SCLK = GPIO_NUM_12;
-constexpr gpio_num_t PIN_CS   = GPIO_NUM_10;
-constexpr gpio_num_t PIN_RST  = GPIO_NUM_9;
-constexpr gpio_num_t PIN_BUSY = GPIO_NUM_8;
-constexpr gpio_num_t PIN_DIO1 = GPIO_NUM_7;
+constexpr gpio_num_t PIN_MISO = GPIO_NUM_12;
+constexpr gpio_num_t PIN_SCLK = GPIO_NUM_10;
+constexpr gpio_num_t PIN_CS   = GPIO_NUM_9;
+constexpr gpio_num_t PIN_RST  = GPIO_NUM_13;
+constexpr gpio_num_t PIN_BUSY = GPIO_NUM_14;
+constexpr gpio_num_t PIN_DIO1 = GPIO_NUM_46;
 
 static TaskHandle_t s_irq_task_handle = nullptr;
 
@@ -114,7 +114,7 @@ extern "C" void app_main(void) {
   espp::Sx126x::RadioConfig radio_cfg{};
   radio_cfg.frequency_hz = 868'100'000; // EU868 (use e.g. 915'000'000 for US915)
   radio_cfg.spreading_factor = espp::Sx126x::SpreadingFactor::SF9;
-  radio_cfg.bandwidth = espp::Sx126x::Bandwidth::BW_125;
+  radio_cfg.bandwidth = espp::Sx126x::Bandwidth::BW_125_KHZ;
   radio_cfg.coding_rate = espp::Sx126x::CodingRate::CR_4_5;
   radio_cfg.tx_power_dbm = 14;          // Keep within local ERP limits
 
@@ -124,10 +124,10 @@ extern "C" void app_main(void) {
       .write_then_read = spi_write_then_read,
       .is_busy = []() { return gpio_get_level(PIN_BUSY) != 0; },
       .reset = [](bool level) { gpio_set_level(PIN_RST, level ? 1 : 0); },
+      .tcxo_voltage = 1.8f,               // Float in volts (1.6f to 3.3f; 0.0f disables TCXO)
+      .use_dio2_as_rf_switch = true,      // Defaults to true
       .radio_config = radio_cfg,
-      // Enable these if your module uses DIO2 for RF switching or DIO3 for TCXO:
-      // .use_dio2_rf_switch = true,
-      // .tcxo_voltage = espp::Sx126x::TcxoVoltage::V_1_8,
+      .auto_init = false,                 // Prevent double-init since you call radio.initialize(ec) below
       .log_level = espp::Logger::Verbosity::INFO,
   });
 
@@ -138,11 +138,10 @@ extern "C" void app_main(void) {
   }
 
   // 5. Register RX callback (invoked from the task that calls handle_dio1_interrupt)
-  radio.set_receive_callback([&radio](std::span<const uint8_t> payload,
-                                      const espp::Sx126x::PacketStatus &status) {
-    std::string msg(reinterpret_cast<const char *>(payload.data()), payload.size());
+  radio.set_receive_callback([&radio](const espp::Sx126x::RxPacket &packet) {
+    std::string msg(reinterpret_cast<const char *>(packet.data.data()), packet.data.size());
     ESP_LOGI(TAG, "RX: '%s' | RSSI: %.1f dBm | SNR: %.1f dB",
-             msg.c_str(), status.rssi_dbm, status.snr_db);
+             msg.c_str(), packet.status.rssi, packet.status.snr);
 
     // If we received a PING, reply with a PONG
     if (msg.rfind("PING", 0) == 0) {
@@ -176,7 +175,8 @@ extern "C" void app_main(void) {
   while (true) {
     // Wait up to 100 ms for a DIO1 interrupt notification
     if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100)) > 0) {
-      radio.handle_dio1_interrupt();
+      std::error_code ec;
+      radio.handle_dio1_interrupt(ec);
     }
 
     auto now = std::chrono::steady_clock::now();
