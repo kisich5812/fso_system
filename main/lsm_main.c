@@ -6,10 +6,10 @@
 #include "esp_log.h"
 #include "lsm6ds3_reg.h"
 
-#define I2C_SDA_PIN     21
-#define I2C_SCL_PIN     22
+#define I2C_SDA_PIN     4
+#define I2C_SCL_PIN     5
 #define I2C_FREQ_HZ     400000
-#define LSM6DS3_ADDR    0x6A   // 0x6B if SA0 is tied high
+#define LSM6DS3_ADDR    0x6B   // 0x6B if SA0 is tied high
 #define I2C_TIMEOUT_MS  100
 
 static const char *TAG = "lsm6ds3";
@@ -88,7 +88,7 @@ void app_main(void)
         int16_t raw[3];
         lsm6ds3_acceleration_raw_get(&ctx, raw);
 
-        printf("Accel [mg]: X=%.2f  Y=%.2f  Z=%.2f\n",
+        printf("Accel [mg]: X=%6.2f  Y=%6.2f  Z=%6.2f\n",
                lsm6ds3_from_fs2g_to_mg(raw[0]),
                lsm6ds3_from_fs2g_to_mg(raw[1]),
                lsm6ds3_from_fs2g_to_mg(raw[2]));

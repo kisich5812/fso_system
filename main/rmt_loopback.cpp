@@ -10,7 +10,7 @@
 namespace {
 
 const char *TAG = "rmt_loopback";
-constexpr gpio_num_t TX_GPIO = GPIO_NUM_4;
+constexpr gpio_num_t TX_GPIO = GPIO_NUM_18;
 constexpr gpio_num_t RX_GPIO = GPIO_NUM_3;
 constexpr uint32_t BIT_RATE_HZ = 2'000;  // try 2000 first, then work your way up
 
@@ -20,14 +20,14 @@ optical::Link g_link;
 void tx_task(void *)
 {
     for (unsigned n = 0;; ++n) {
-        char msg[optical::MAX_PAYLOAD];
-        int len = std::snprintf(msg, sizeof(msg), "Hello! #%u", n);
-        if (len > static_cast<int>(sizeof(msg)) - 1) {
+        char msg[optical::MAX_PAYLOAD] = "UUUUUUUUUUUUUUUUUUUUUUUUUUUUUU";
+        int len; //std::snprintf(msg, sizeof(msg), "Hello! #%u", n);
+        //if (len > static_cast<int>(sizeof(msg)) - 1) {
             len = sizeof(msg) - 1;
-        }
+        //}
         const esp_err_t err = g_link.send(reinterpret_cast<const uint8_t *>(msg), len);
         ESP_LOGI(TAG, "TX #%u (%d bytes): %s -> %s", n, len, msg, esp_err_to_name(err));
-        vTaskDelay(pdMS_TO_TICKS(500));
+        //vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
@@ -57,6 +57,6 @@ void start_rmt_loopback()
     cfg.bit_rate_hz = BIT_RATE_HZ;
     ESP_ERROR_CHECK(g_link.begin(cfg));
 
-    xTaskCreate(rx_task, "app_rx", 4096, nullptr, 5, nullptr);
+    //xTaskCreate(rx_task, "app_rx", 4096, nullptr, 5, nullptr);
     xTaskCreate(tx_task, "app_tx", 4096, nullptr, 5, nullptr);
 }

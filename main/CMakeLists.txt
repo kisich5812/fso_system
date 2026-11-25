@@ -1,5 +1,5 @@
 idf_component_register(
-  SRCS "main.cpp" "dac_setup.cpp" "rmt_loopback.cpp" "optical_link.cpp"
+  SRCS "lsm_main.c" 
   INCLUDE_DIRS "."
   PRIV_REQUIRES spi_flash
                 esp_driver_rmt
