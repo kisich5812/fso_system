@@ -4,12 +4,11 @@
 #include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "config.h"
 
 namespace {
 
 const char *TAG = "galvo_system";
-constexpr uint8_t DAC_I2C_ADDRESS_HIGHER = 0x61;
-constexpr uint8_t DAC_I2C_ADDRESS_LOWER  = 0x60; 
 
 i2c_master_dev_handle_t initialize_dac(i2c_master_bus_handle_t i2c_bus, 
                                        uint8_t addr);

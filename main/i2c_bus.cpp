@@ -2,11 +2,7 @@
 
 #include "driver/i2c_master.h"
 #include "esp_err.h"
-
-namespace {
-constexpr gpio_num_t SDA_GPIO = GPIO_NUM_4;
-constexpr gpio_num_t SCL_GPIO = GPIO_NUM_5;
-}
+#include "config.h"
 
 i2c_master_bus_handle_t initialize_i2c_bus() {
     i2c_master_bus_config_t i2c_bus_config = {};
