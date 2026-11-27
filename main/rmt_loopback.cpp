@@ -23,7 +23,7 @@ void tx_task(void *)
 
     for (unsigned n = 0;; ++n) {
         char msg[optical::MAX_PAYLOAD] = "UUUUU";
-        int = len = sizeof(msg) - 1;
+        int len = sizeof("UUUUU") - 1;
         const esp_err_t err = g_link.send(reinterpret_cast<const uint8_t *>(msg), len);
         ESP_LOGI(TAG, "TX #%u (%d bytes): %s -> %s", n, len, msg, esp_err_to_name(err));
         //vTaskDelay(pdMS_TO_TICKS(500));
