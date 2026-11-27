@@ -1,5 +1,6 @@
 idf_component_register(
-  SRCS "lora_main.cpp" 
+    SRCS "main.cpp" "GalvoSystem.cpp" "optical_link.cpp" "rmt_loopback.cpp"
+         "i2c_bus.cpp"
   INCLUDE_DIRS "."
   PRIV_REQUIRES spi_flash
                 esp_driver_rmt
