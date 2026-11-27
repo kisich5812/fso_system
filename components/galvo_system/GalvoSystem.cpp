@@ -1,4 +1,4 @@
-#include "GalvoSystem.h"
+#include "include/GalvoSystem.h"
 
 #include <algorithm>
 #include <cmath>
